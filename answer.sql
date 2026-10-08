@@ -1,3 +1,4 @@
+```sql
 -- ============================================================
 -- PLP HANDS-ON LAB
 -- Backups, Point-in-Time Recovery, and Replication
@@ -24,20 +25,32 @@ SELECT current_user;
 
 
 -- ============================================================
--- 3. CHECK WHETHER THIS SERVER IS IN RECOVERY
+-- 3. CHECK WHETHER THIS SERVER IS IN RECOVERY MODE
 -- ============================================================
 
 SELECT pg_is_in_recovery();
 
 
 -- ============================================================
--- 4. CHECK REPLICATION STATUS ON PRIMARY
+-- 4. CHECK DATABASE DATA DIRECTORY
+-- ============================================================
+
+SHOW data_directory;
+
+
+-- ============================================================
+-- 5. CHECK PG_HBA CONFIGURATION FILE
+-- ============================================================
+
+SHOW hba_file;
+
+
+-- ============================================================
+-- 6. CHECK STREAMING REPLICATION STATUS
+-- Run this on the PRIMARY server
 -- ============================================================
 
 SELECT
-    pid,
-    usename,
-    application_name,
     client_addr,
     state,
     sync_state,
@@ -49,57 +62,61 @@ FROM pg_stat_replication;
 
 
 -- ============================================================
--- 5. CHECK REPLICATION LAG
+-- 7. CHECK REPLICATION LAG
 -- ============================================================
 
 SELECT
-    application_name,
     client_addr,
-    state,
-    sync_state,
-    pg_wal_lsn_diff(sent_lsn, replay_lsn) AS byte_lag
+    pg_wal_lsn_diff(sent_lsn, replay_lsn)
+        AS replication_lag_bytes
 FROM pg_stat_replication;
 
 
 -- ============================================================
--- 6. CHECK WAL LOCATION
--- ============================================================
-
-SELECT pg_current_wal_lsn();
-
-
--- ============================================================
--- 7. VERIFY RECOVERY STATUS ON STANDBY
+-- 8. CHECK STANDBY RECOVERY STATUS
+-- Run this on the STANDBY server
 -- ============================================================
 
 SELECT pg_is_in_recovery();
 
 
 -- ============================================================
--- 8. CHECK DATABASES
+-- 9. CHECK STANDBY WAL RECEIVER
 -- ============================================================
 
 SELECT
-    datname
-FROM pg_database
-ORDER BY datname;
+    status,
+    receive_start_lsn,
+    received_lsn,
+    latest_end_lsn,
+    latest_end_time
+FROM pg_stat_wal_receiver;
 
 
 -- ============================================================
--- 9. CHECK SERVER VERSION
+-- 10. CHECK CURRENT WAL LSN
 -- ============================================================
 
-SELECT version();
-
-
--- ============================================================
--- 10. VERIFY CURRENT TIME
--- Useful when documenting PITR target time
--- ============================================================
-
-SELECT current_timestamp;
+SELECT pg_current_wal_lsn();
 
 
 -- ============================================================
--- END OF SQL VERIFICATION
+-- 11. CHECK CURRENT TIME
+-- Used to identify the PITR recovery target
 -- ============================================================
+
+SELECT now();
+
+
+-- ============================================================
+-- 12. PITR RECOVERY TARGET USED IN THIS LAB
+-- ============================================================
+
+-- Recovery target:
+-- 2026-10-07 13:23:32.085175+03
+
+
+-- ============================================================
+-- END OF ANSWERS
+-- ============================================================
+```
