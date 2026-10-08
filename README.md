@@ -20,3 +20,19 @@ Example:
 
 ```bash
 pg_dump -U postgres -d your_database -F c -f backup.dump
+
+wal_level = replica
+archive_mode = on
+archive_command = 'cp %p /var/lib/postgresql/wal_archive/%f'
+
+pg_basebackup -U postgres -D /var/backups/postgresql/base_backup -Fp -Xs -P
+
+restore_command = 'cp /var/lib/postgresql/wal_archive/%f %p'
+recovery_target_time = 'YYYY-MM-DD HH:MM:SS'
+
+CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'StrongPassword';
+
+pg_basebackup -h PRIMARY_IP -U replicator -D /var/lib/postgresql/data -Fp -Xs -P -R
+
+SELECT * FROM pg_stat_replication;
+SELECT pg_is_in_recovery();
