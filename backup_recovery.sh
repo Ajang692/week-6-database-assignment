@@ -5,176 +5,144 @@
 # Backups, Point-in-Time Recovery, and Replication
 # ============================================================
 
-# ------------------------------------------------------------
+# ============================================================
 # 1. VARIABLES
-# ------------------------------------------------------------
+# ============================================================
 
-DB_NAME="your_database"
-DB_USER="postgres"
-
+DB_NAME="your_database_name"
 BACKUP_DIR="/var/backups/postgresql"
-WAL_ARCHIVE="/var/lib/postgresql/wal_archive"
-BASE_BACKUP="/var/backups/postgresql/base_backup"
+DATA_DIR="/var/lib/postgresql/data"
 
-# ------------------------------------------------------------
-# 2. CREATE BACKUP DIRECTORIES
-# ------------------------------------------------------------
-
-mkdir -p "$BACKUP_DIR"
-mkdir -p "$WAL_ARCHIVE"
-mkdir -p "$BASE_BACKUP"
-
-# ------------------------------------------------------------
-# 3. LOGICAL BACKUP USING pg_dump
-# ------------------------------------------------------------
-
-pg_dump -U "$DB_USER" -d "$DB_NAME" \
-    -F c \
-    -f "$BACKUP_DIR/${DB_NAME}_backup.dump"
-
-echo "Logical backup completed."
-
-# ------------------------------------------------------------
-# 4. WAL ARCHIVING
-# ------------------------------------------------------------
-
-# Add the following settings to postgresql.conf:
-
-# wal_level = replica
-# archive_mode = on
-# archive_command = 'cp %p /var/lib/postgresql/wal_archive/%f'
-
-# After changing postgresql.conf, restart PostgreSQL.
-
-# Example:
-
-# sudo systemctl restart postgresql
-
-# ------------------------------------------------------------
-# 5. CREATE A BASE BACKUP
-# ------------------------------------------------------------
-
-pg_basebackup \
-    -U "$DB_USER" \
-    -D "$BASE_BACKUP" \
-    -Fp \
-    -Xs \
-    -P
-
-echo "Base backup completed."
-
-# ------------------------------------------------------------
-# 6. POINT-IN-TIME RECOVERY
-# ------------------------------------------------------------
-
-# Stop PostgreSQL before restoring:
-
-# sudo systemctl stop postgresql
-
-# Restore/copy the base backup to the PostgreSQL data directory.
-
-# Example:
-
-# sudo rm -rf /var/lib/postgresql/data/*
-# sudo cp -a "$BASE_BACKUP"/. /var/lib/postgresql/data/
-
-# Configure recovery target in PostgreSQL.
-
-# For PostgreSQL versions that use recovery.signal:
-
-# sudo touch /var/lib/postgresql/data/recovery.signal
-
-# Add the following to postgresql.conf:
-
-# restore_command = 'cp /var/lib/postgresql/wal_archive/%f %p'
-# recovery_target_time = 'YYYY-MM-DD HH:MM:SS'
-
-# Start PostgreSQL:
-
-# sudo systemctl start postgresql
-
-# PostgreSQL will replay WAL files until the specified
-# recovery target is reached.
-
-# ------------------------------------------------------------
-# 7. STREAMING REPLICATION
-# ------------------------------------------------------------
-
-# Create a replication user on the primary:
-
-# sudo -u postgres psql
-
-# Then execute:
-
-# CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'StrongPassword';
-
-# ------------------------------------------------------------
-# 8. pg_hba.conf CONFIGURATION
-# ------------------------------------------------------------
-
-# Add an appropriate replication rule to pg_hba.conf:
-
-# host    replication    replicator    STANDBY_IP/32    scram-sha-256
-
-# Example:
-
-# host    replication    replicator    192.168.1.20/32    scram-sha-256
-
-# Reload PostgreSQL after changing pg_hba.conf:
-
-# sudo systemctl reload postgresql
-
-# ------------------------------------------------------------
-# 9. CREATE STANDBY USING pg_basebackup
-# ------------------------------------------------------------
-
-# Run on the standby server:
-
-# pg_basebackup \
-#     -h PRIMARY_IP \
-#     -U replicator \
-#     -D /var/lib/postgresql/data \
-#     -Fp \
-#     -Xs \
-#     -P \
-#     -R
-
-# The -R option creates the standby connection configuration.
-
-# ------------------------------------------------------------
-# 10. START THE STANDBY
-# ------------------------------------------------------------
-
-# sudo systemctl start postgresql
-
-# ------------------------------------------------------------
-# 11. VERIFY REPLICATION
-# ------------------------------------------------------------
-
-# On the primary:
-
-# psql -U postgres -d your_database
-
-# SELECT * FROM pg_stat_replication;
-
-# On the standby:
-
-# SELECT pg_is_in_recovery();
-
-# ------------------------------------------------------------
-# 12. CHECK REPLICATION LAG
-# ------------------------------------------------------------
-
-# On the primary:
-
-# SELECT
-#     application_name,
-#     client_addr,
-#     state,
-#     sync_state,
-#     pg_wal_lsn_diff(sent_lsn, replay_lsn) AS byte_lag
-# FROM pg_stat_replication;
+REPLICATOR_USER="replicator"
 
 # ============================================================
-# END OF BACKUP, PITR AND REPLICATION PROCEDURE
+# 2. CREATE BACKUP DIRECTORY
+# ============================================================
+
+sudo mkdir -p "$BACKUP_DIR"
+
+# ============================================================
+# 3. CREATE A LOGICAL BACKUP USING pg_dump
+# ============================================================
+
+pg_dump "$DB_NAME" > "$BACKUP_DIR/${DB_NAME}_backup.sql"
+
+# Verify the backup
+ls -lh "$BACKUP_DIR/${DB_NAME}_backup.sql"
+
+# ============================================================
+# 4. CHECK WAL CONFIGURATION
+# ============================================================
+
+psql -d "$DB_NAME" -c "SHOW wal_level;"
+psql -d "$DB_NAME" -c "SHOW archive_mode;"
+psql -d "$DB_NAME" -c "SHOW archive_command;"
+
+# ============================================================
+# 5. STOP POSTGRESQL SERVICE
+# ============================================================
+
+sudo systemctl stop postgresql
+
+# ============================================================
+# 6. BACK UP THE DAMAGED DATA DIRECTORY
+# ============================================================
+
+sudo mv "$DATA_DIR" "${DATA_DIR}_damaged"
+
+# ============================================================
+# 7. CREATE A NEW DATA DIRECTORY
+# ============================================================
+
+sudo mkdir -p "$DATA_DIR"
+
+sudo chown postgres:postgres "$DATA_DIR"
+sudo chmod 700 "$DATA_DIR"
+
+# ============================================================
+# 8. RESTORE THE BASE BACKUP
+# ============================================================
+
+sudo -u postgres pg_basebackup \
+    -h PRIMARY_HOST \
+    -D "$DATA_DIR" \
+    -U "$REPLICATOR_USER" \
+    -Fp \
+    -Xs \
+    -P \
+    -R
+
+# ============================================================
+# 9. CONFIGURE pg_hba.conf FOR REPLICATION
+# ============================================================
+
+echo "host replication $REPLICATOR_USER STANDBY_IP/32 scram-sha-256" \
+    | sudo tee -a "$DATA_DIR/pg_hba.conf"
+
+# ============================================================
+# 10. RECOVERY CONFIGURATION
+# ============================================================
+
+sudo tee -a "$DATA_DIR/postgresql.conf" > /dev/null <<EOF
+
+restore_command = 'cp /path/to/archive/%f %p'
+recovery_target_time = '2026-10-08 10:00:00'
+
+EOF
+
+# ============================================================
+# 11. SET PERMISSIONS
+# ============================================================
+
+sudo chown -R postgres:postgres "$DATA_DIR"
+sudo chmod 700 "$DATA_DIR"
+
+# ============================================================
+# 12. START POSTGRESQL
+# ============================================================
+
+sudo systemctl start postgresql
+
+# ============================================================
+# 13. VERIFY POSTGRESQL STATUS
+# ============================================================
+
+sudo systemctl status postgresql
+
+# ============================================================
+# 14. VERIFY RECOVERY MODE
+# ============================================================
+
+psql -d "$DB_NAME" -c "SELECT pg_is_in_recovery();"
+
+# ============================================================
+# 15. VERIFY REPLICATION
+# ============================================================
+
+psql -d "$DB_NAME" -c "
+SELECT
+    client_addr,
+    state,
+    sync_state,
+    sent_lsn,
+    write_lsn,
+    flush_lsn,
+    replay_lsn
+FROM pg_stat_replication;
+"
+
+# ============================================================
+# 16. CHECK REPLICATION LAG
+# ============================================================
+
+psql -d "$DB_NAME" -c "
+SELECT
+    client_addr,
+    pg_wal_lsn_diff(sent_lsn, replay_lsn)
+    AS replication_lag_bytes
+FROM pg_stat_replication;
+"
+
+# ============================================================
+# END
 # ============================================================
